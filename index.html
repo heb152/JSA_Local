@@ -1399,16 +1399,32 @@ async function agentProjectManager(job) {
   if (ragActive && ragChunks.length) {
     const ctx = ragKeywordSearch(job, 5).join('\n\n');
     if (!ctx || ctx.trim().length < 50) {
-      return `⚠️ The task "${job}" does not appear to be covered in the provided document. The document may not contain relevant procedures for this activity. Please verify with the appropriate manual.`;
+      return `⚠️ The task "${job}" does not appear to be covered in the provided document.`;
     }
     return await callAPI(
       ragSystemPrompt('project manager specializing in construction safety'),
-      `Task: ${job}\n\nDocument content:\n${ctx}\n\nBreak down this task into implementation steps based ONLY on the document above. Format as a numbered list.`
+      `Task: ${job}\n\nDocument content:\n${ctx}\n\nBreak down this task into 5-8 specific implementation steps based ONLY on the document above. Each step should be a distinct phase of work. Format as a numbered list, one step per line.`
     );
   }
   return await callAPI(
-    `You are a highly skilled project manager with expertise in construction projects. Break down the given construction task into clear, detailed implementation steps focusing on the execution phase. Format as a numbered list.`,
-    `Break down this construction task into steps: ${job}`
+    `You are a highly skilled construction project manager. Break down the given task into 5-8 SPECIFIC, SEQUENTIAL implementation steps.
+
+RULES:
+- Each step must be a distinct phase of work (preparation, setup, execution, cleanup, etc.)
+- Steps should be specific to the task — NOT generic
+- Include pre-task, task execution, and post-task steps
+- Format: numbered list, one step per line
+- Do NOT combine multiple phases into one step
+
+EXAMPLE for "Crack sealing on highway":
+1. Site inspection and traffic control setup
+2. Pre-heat crack sealing equipment
+3. Clean and prepare cracks with compressed air
+4. Apply sealant material to cracks
+5. Finish and smooth sealant surface
+6. Allow curing time and inspect quality
+7. Remove traffic control and clean up site`,
+    `Break down this construction task into 5-8 specific steps: ${job}`
   );
 }
 

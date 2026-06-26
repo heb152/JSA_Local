@@ -1893,25 +1893,29 @@ async function sendChat() {
     let systemPrompt = '';
 
     if (ragActive && ragChunks.length) {
-      // Search document for relevant context
-      const docContext = ragKeywordSearch(question, 4).join('\n\n');
-      systemPrompt = `You are a construction safety expert assistant with access to a specific reference document and a JSA report.
+      // Search document for additional context
+      const docContext = ragKeywordSearch(question, 3).join('\n\n');
+      systemPrompt = `You are a construction safety expert assistant. You have access to a JSA report AND a reference document.
 
-DOCUMENT: "${ragFileName}"
-${docContext ? `\nRelevant document sections:\n${docContext}` : ''}
+PRIORITY: Answer primarily from the JSA REPORT below. Only use the document for additional context if the report doesn't cover it.
 
-JSA REPORT SUMMARY:
-${jsaReportContext.substring(0, 2000)}
+JSA REPORT (PRIMARY SOURCE):
+${jsaReportContext.substring(0, 3000)}
 
-Answer questions based on the document and JSA report. Be concise and practical.
-If the question is not covered in the document or report, say so clearly.`;
+${docContext ? `REFERENCE DOCUMENT "${ragFileName}" (secondary source):\n${docContext}` : ''}
+
+Rules:
+- If the answer is in the JSA report, use it directly
+- Be specific about which step or hazard you're referring to
+- If neither source covers it, say so and give general guidance`;
     } else {
       systemPrompt = `You are a construction safety expert assistant. You have access to a Job Safety Analysis (JSA) report.
 
 JSA REPORT:
 ${jsaReportContext.substring(0, 3000)}
 
-Answer questions about this JSA report and general construction safety. Be concise and practical.`;
+Answer questions about this JSA report. Be specific — reference the exact steps, hazards, and controls from the report.
+If something isn't in the report, say so clearly and provide general guidance.`;
     }
 
     const answer = await callAPI(systemPrompt, question);

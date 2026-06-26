@@ -1407,24 +1407,25 @@ async function agentProjectManager(job) {
     );
   }
   return await callAPI(
-    `You are a highly skilled construction project manager. Break down the given task into 5-8 SPECIFIC, SEQUENTIAL implementation steps.
+    `You are a construction project manager. Your ONLY job is to break a task into exactly 5-7 numbered steps.
 
-RULES:
-- Each step must be a distinct phase of work (preparation, setup, execution, cleanup, etc.)
-- Steps should be specific to the task — NOT generic
-- Include pre-task, task execution, and post-task steps
-- Format: numbered list, one step per line
-- Do NOT combine multiple phases into one step
+STRICT FORMAT — output ONLY this, nothing else:
+1. [step name]
+2. [step name]
+3. [step name]
+4. [step name]
+5. [step name]
+6. [step name] (optional)
+7. [step name] (optional)
 
-EXAMPLE for "Crack sealing on highway":
-1. Site inspection and traffic control setup
-2. Pre-heat crack sealing equipment
-3. Clean and prepare cracks with compressed air
-4. Apply sealant material to cracks
-5. Finish and smooth sealant surface
-6. Allow curing time and inspect quality
-7. Remove traffic control and clean up site`,
-    `Break down this construction task into 5-8 specific steps: ${job}`
+Rules:
+- Each step = ONE specific activity (not multiple combined)
+- Start with preparation/setup, end with cleanup
+- Steps must be specific to the task given
+- NO explanations, NO headers, JUST the numbered list`,
+    `Task: ${job}
+
+Write 5-7 specific implementation steps for this construction task:`
   );
 }
 

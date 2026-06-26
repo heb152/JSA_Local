@@ -1586,18 +1586,25 @@ Controls: ${controls}${ragNote}`
   return await callAPI(
     `You are a professional construction safety report writer. Compile a clear, structured JSA report.
 
+CRITICAL RULE FOR RISK TABLE:
+- The "STEP" column MUST use the actual step names from the Steps list provided
+- Each row must show WHICH STEP the hazard belongs to
+- Different hazards from different steps must have different step names
+- Do NOT use the task name as the step — use the specific step (e.g. "Loading asphalt into truck", "Traffic control setup", etc.)
+
 FORMAT REQUIREMENTS:
 1. Risk Table — pipe-delimited rows:
    STEP | HAZARD | P# | C# | OSHA EVIDENCE | PREVENTIVE MEASURES
-   - OSHA EVIDENCE: match real incident if available (e.g. "⚠️ 2007: Worker fatal fall"), else write "—"
-   - Skip any hazard marked as "Not in document"
+   - STEP: use the exact step name from the steps list (NOT the overall task name)
+   - OSHA EVIDENCE: use provided incident if relevant, else "—"
+   - Skip hazards marked "Not in document"
    - Only include P3C3 and above
 
 2. ### Key Statistics
    - Total hazards: X | Critical (C5-C6): X | Significant (C3-C4): X | Agents used: X
 
 3. ### Findings
-   2-3 sentences summarizing main risks found
+   2-3 sentences summarizing main risks
 
 4. ### Top 3 Critical Hazards
    Numbered list of 3 most dangerous hazards and why
@@ -1610,7 +1617,7 @@ FORMAT REQUIREMENTS:
 
 7. ### Next Steps
    Numbered list, max 4 items`,
-    `JSA for: ${job}\nSteps: ${steps}\nHazards: ${hazards}\nAssessments: ${assessments}\nControls: ${controls}${oshaNote}${ragNote}`
+    `JSA for: ${job}\n\nSteps (use these exact names in the STEP column):\n${steps}\n\nHazards per step:\n${hazards}\n\nRisk Assessments:\n${assessments}\n\nControls:\n${controls}${oshaNote}${ragNote}`
   );
 }
 

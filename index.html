@@ -1391,6 +1391,17 @@ async function callAPI(systemPrompt, userMessage) {
 
 // Strict RAG system prompt — used when document is loaded
 function ragSystemPrompt(role) {
+  // FIX 2: In supplemental mode, combine document knowledge with general expertise
+  // instead of being restricted to document-only content.
+  if (window._ragSupplemental) {
+    return `You are a ${role}. A reference document has been provided as supplemental context.
+RULES:
+1. Use the document as your PRIMARY reference when it contains relevant information.
+2. SUPPLEMENT with your general knowledge for any aspects not covered in the document.
+3. When using document information, reference it clearly.
+4. When using general knowledge, apply it as a safety expert would.
+5. Do NOT say the topic is not covered — always provide a complete analysis.`;
+  }
   return `You are a ${role}. A specific reference document has been provided.
 STRICT RULES:
 1. Base your analysis ONLY on information found in the provided document.
@@ -1401,17 +1412,20 @@ STRICT RULES:
 
 async function agentProjectManager(job) {
   if (ragActive && ragChunks.length) {
-    // Use getRAGContext (not ragKeywordSearch directly) so this agent respects
-    // whichever retrieval mode (keyword vs. API re-ranking) the user has selected,
-    // instead of silently always falling back to raw keyword matching.
-    const ctx = await getRAGContext(job);
-    if (!ctx || ctx.trim().length < 50) {
+    const ctx = ragKeywordSearch(job, 5).join('\n\n');
+    // FIX 2: In supplemental mode, low/no doc context is OK — we fall through to general knowledge below.
+    if ((!ctx || ctx.trim().length < 50) && !window._ragSupplemental) {
       return `⚠️ The task "${job}" does not appear to be covered in the provided document.`;
     }
-    return await callAPI(
-      ragSystemPrompt('project manager specializing in construction safety'),
-      `Task: ${job}\n\nDocument content:${ctx}\n\nBreak down this task into 5-8 specific implementation steps based ONLY on the document above. Each step should be a distinct phase of work. Format as a numbered list, one step per line.`
-    );
+    // In supplemental mode with no relevant doc chunks, skip to general knowledge path
+    if ((!ctx || ctx.trim().length < 50) && window._ragSupplemental) {
+      // fall through to general knowledge path below
+    } else {
+      return await callAPI(
+        ragSystemPrompt('project manager specializing in construction safety'),
+        `Task: ${job}\n\nDocument content:\n${ctx}\n\nBreak down this task into 5-8 specific implementation steps. Use the document as your primary reference, and supplement with your expertise for any gaps. Each step should be a distinct phase of work. Format as a numbered list, one step per line.`
+      );
+    }
   }
   return await callAPI(
     `You are a construction project manager. Your ONLY job is to break a task into exactly 5-7 numbered steps.
@@ -2311,40 +2325,18 @@ function removeRAGFile() {
   document.getElementById('ragTestQ').value = '';
 }
 
-// Generic words that appear throughout almost any construction/equipment manual.
-// Left unfiltered, high-frequency-but-low-specificity words (e.g. "site") can outscore
-// the rare, task-specific words (e.g. "grading") that actually identify relevant chunks.
-const RAG_STOPWORDS = new Set(['this','that','with','from','have','been','will','were',
-  'they','when','what','each','also','into','than','then','some','such','only','both',
-  'most','over','after','before','their','there','these','those','which','while','about',
-  'above','below','under','between','your','area','work','site','task','using','used',
-  'during','operation','operating','always','never','ensure','shall','should']);
-
 function ragKeywordSearch(query, topN = 5) {
-  const qWords = query.toLowerCase().split(/\s+/)
-    .filter(w => w.length > 3)
-    .filter(w => !RAG_STOPWORDS.has(w.replace(/[^a-z0-9]/g, '')));
-
-  // Rarer query words are more informative than common ones (crude IDF), so a chunk
-  // matching a rare word like "leveling" should outrank one matching only a common word.
-  const docFreq = {};
-  qWords.forEach(w => {
-    const clean = w.replace(/[^a-z0-9]/g, '');
-    if (clean.length < 3) return;
-    docFreq[clean] = ragChunks.reduce((n, c) => n + (c.toLowerCase().includes(clean) ? 1 : 0), 0);
-  });
-
+  const qWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
   const scored = ragChunks.map((chunk, i) => {
     const lower = chunk.toLowerCase();
     let score = 0;
     qWords.forEach(w => {
-      const clean = w.replace(/[^a-z0-9]/g, '');
-      if (clean.length < 3) return;
-      const freq = docFreq[clean] || 1;
-      const weight = 1 / freq; // rarer word across the document -> higher weight per hit
+      // Use simple string includes — no regex, no crash
       let pos = 0;
+      const clean = w.replace(/[^a-z0-9]/g, ''); // only alphanumeric
+      if (clean.length < 3) return;
       while ((pos = lower.indexOf(clean, pos)) !== -1) {
-        score += weight;
+        score++;
         pos += clean.length;
       }
     });
@@ -2354,10 +2346,7 @@ function ragKeywordSearch(query, topN = 5) {
 }
 
 async function ragAPISearch(query, topN = 3) {
-  // Wider candidate pool than before: keyword search is an approximate first pass,
-  // so we give the LLM re-ranker more chunks to choose from rather than betting
-  // everything on the raw keyword ranking already containing the right one.
-  const candidates = ragKeywordSearch(query, 20);
+  const candidates = ragKeywordSearch(query, 10);
   if (!candidates.length) return [];
   const apiKey = document.getElementById('apiKey').value.trim();
   if (!apiKey) return candidates.slice(0, topN);
@@ -2437,7 +2426,18 @@ async function runJSA() {
   // ── CHECK: if guide loaded, verify task is relevant to document ──
   if (ragActive && ragChunks.length) {
     try {
-      const sample = ragChunks.slice(0, 4).join('\n\n').substring(0, 2000);
+      // FIX 1: Sample from across the FULL document, not just the first 4 chunks.
+      // First chunks are often cover pages / table of contents — not useful for relevance.
+      // We take 8 evenly-spaced chunks to see content from every part of the document.
+      const total = ragChunks.length;
+      const step = Math.max(1, Math.floor(total / 8));
+      const sampledChunks = [];
+      for (let i = 0; i < 8; i++) {
+        const idx = Math.min(i * step, total - 1);
+        sampledChunks.push(ragChunks[idx]);
+      }
+      const sample = sampledChunks.join('\n\n').substring(0, 3000);
+
       const check = await callAPI(
         `You are a document relevance checker. Given a document and a task description, decide if the task is related to the equipment, machinery, or procedures described in the document.
 
@@ -2445,35 +2445,45 @@ Be LENIENT — if the task involves the same type of equipment, machinery, or wo
 
 Examples of YES:
 - Document is about excavators → task is "loading excavator onto truck" → YES (same equipment)
+- Document is about excavators → task is "site grading and leveling" → YES (excavators have a dozer blade used for grading and leveling)
 - Document is about asphalt pavers → task is "paving a road section" → YES (same equipment)
 - Document is about excavators → task is "digging a trench" → YES (core operation)
+- Document is about excavators → task is "leveling ground" → YES (core operation of the dozer attachment)
 
 Examples of NO:
 - Document is about excavators → task is "electrical wiring installation" → NO (unrelated)
 - Document is about asphalt pavers → task is "concrete formwork" → NO (different trade)
 
 Answer ONLY with YES or NO, nothing else.`,
-        `Document title: "${ragFileName}"\nDocument excerpt:\n${sample}\n\nTask: "${task}"\n\nIs this task related to the equipment or work described in this document? Answer YES or NO.`
+        `Document title: "${ragFileName}"\nDocument excerpt (sampled from across full document):\n${sample}\n\nTask: "${task}"\n\nIs this task related to the equipment or work described in this document? Answer YES or NO.`
       );
 
       const isRelevant = check.trim().toUpperCase().startsWith('YES');
 
       if (!isRelevant) {
         const proceed = confirm(
-          `⚠️ This task may not be covered in "${ragFileName}".\n\n` +
-          `"${task}" does not appear to be related to the equipment or procedures in this document.\n\n` +
-          `Click OK to run JSA using general AI knowledge instead.\n` +
+          `⚠️ This task may not be fully described in "${ragFileName}".\n\n` +
+          `"${task}" is not a direct match, but the document may still contain useful safety information about this equipment.\n\n` +
+          `Click OK to run JSA using BOTH the document AND general AI knowledge (recommended).\n` +
           `Click Cancel to go back and choose a different task.`
         );
         if (!proceed) return;
-        ragActive = false;
+        // FIX 2: Do NOT set ragActive = false. Keep the document active as supplemental context.
+        // Set a flag so agents know to combine document info with general knowledge.
+        window._ragSupplemental = true;
         const badge = document.querySelector('#ragCard .rag-file-info');
-        if (badge) badge.style.opacity = '0.5';
+        if (badge) badge.style.opacity = '0.7';
+      } else {
+        window._ragSupplemental = false;
       }
     } catch(e) {
       // If check fails, continue normally without blocking
+      window._ragSupplemental = false;
     }
+  } else {
+    window._ragSupplemental = false;
   }
+
 
   hideError();
   fullRawOutput = '';

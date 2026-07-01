@@ -1401,13 +1401,16 @@ STRICT RULES:
 
 async function agentProjectManager(job) {
   if (ragActive && ragChunks.length) {
-    const ctx = ragKeywordSearch(job, 5).join('\n\n');
+    // Use getRAGContext (not ragKeywordSearch directly) so this agent respects
+    // whichever retrieval mode (keyword vs. API re-ranking) the user has selected,
+    // instead of silently always falling back to raw keyword matching.
+    const ctx = await getRAGContext(job);
     if (!ctx || ctx.trim().length < 50) {
       return `⚠️ The task "${job}" does not appear to be covered in the provided document.`;
     }
     return await callAPI(
       ragSystemPrompt('project manager specializing in construction safety'),
-      `Task: ${job}\n\nDocument content:\n${ctx}\n\nBreak down this task into 5-8 specific implementation steps based ONLY on the document above. Each step should be a distinct phase of work. Format as a numbered list, one step per line.`
+      `Task: ${job}\n\nDocument content:${ctx}\n\nBreak down this task into 5-8 specific implementation steps based ONLY on the document above. Each step should be a distinct phase of work. Format as a numbered list, one step per line.`
     );
   }
   return await callAPI(
@@ -2308,18 +2311,40 @@ function removeRAGFile() {
   document.getElementById('ragTestQ').value = '';
 }
 
+// Generic words that appear throughout almost any construction/equipment manual.
+// Left unfiltered, high-frequency-but-low-specificity words (e.g. "site") can outscore
+// the rare, task-specific words (e.g. "grading") that actually identify relevant chunks.
+const RAG_STOPWORDS = new Set(['this','that','with','from','have','been','will','were',
+  'they','when','what','each','also','into','than','then','some','such','only','both',
+  'most','over','after','before','their','there','these','those','which','while','about',
+  'above','below','under','between','your','area','work','site','task','using','used',
+  'during','operation','operating','always','never','ensure','shall','should']);
+
 function ragKeywordSearch(query, topN = 5) {
-  const qWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  const qWords = query.toLowerCase().split(/\s+/)
+    .filter(w => w.length > 3)
+    .filter(w => !RAG_STOPWORDS.has(w.replace(/[^a-z0-9]/g, '')));
+
+  // Rarer query words are more informative than common ones (crude IDF), so a chunk
+  // matching a rare word like "leveling" should outrank one matching only a common word.
+  const docFreq = {};
+  qWords.forEach(w => {
+    const clean = w.replace(/[^a-z0-9]/g, '');
+    if (clean.length < 3) return;
+    docFreq[clean] = ragChunks.reduce((n, c) => n + (c.toLowerCase().includes(clean) ? 1 : 0), 0);
+  });
+
   const scored = ragChunks.map((chunk, i) => {
     const lower = chunk.toLowerCase();
     let score = 0;
     qWords.forEach(w => {
-      // Use simple string includes — no regex, no crash
-      let pos = 0;
-      const clean = w.replace(/[^a-z0-9]/g, ''); // only alphanumeric
+      const clean = w.replace(/[^a-z0-9]/g, '');
       if (clean.length < 3) return;
+      const freq = docFreq[clean] || 1;
+      const weight = 1 / freq; // rarer word across the document -> higher weight per hit
+      let pos = 0;
       while ((pos = lower.indexOf(clean, pos)) !== -1) {
-        score++;
+        score += weight;
         pos += clean.length;
       }
     });
@@ -2329,7 +2354,10 @@ function ragKeywordSearch(query, topN = 5) {
 }
 
 async function ragAPISearch(query, topN = 3) {
-  const candidates = ragKeywordSearch(query, 10);
+  // Wider candidate pool than before: keyword search is an approximate first pass,
+  // so we give the LLM re-ranker more chunks to choose from rather than betting
+  // everything on the raw keyword ranking already containing the right one.
+  const candidates = ragKeywordSearch(query, 20);
   if (!candidates.length) return [];
   const apiKey = document.getElementById('apiKey').value.trim();
   if (!apiKey) return candidates.slice(0, topN);

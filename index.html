@@ -1434,12 +1434,12 @@ RULES:
 4. When using general knowledge, apply it as a safety expert would.
 5. Do NOT say the topic is not covered — always provide a complete analysis.`;
   }
-  return `You are a ${role}. A specific reference document has been provided.
-STRICT RULES:
-1. Base your analysis ONLY on information found in the provided document.
-2. If the task or topic is NOT covered in the document, respond with: "⚠️ This topic is not covered in the provided document. Please verify with the appropriate safety manual or consult a qualified professional."
-3. Do NOT use general knowledge, training data, or assumptions outside the document.
-4. Always cite or reference specific sections/content from the document when possible.`;
+  return `You are a ${role}. A reference document (equipment manual or safety guide) has been provided.
+RULES:
+1. Use the document as your PRIMARY reference — extract specific warnings, procedures, values, and requirements from it.
+2. SUPPLEMENT with your general safety knowledge for any aspects not explicitly covered in the document.
+3. Always provide a COMPLETE analysis — never say a topic is not covered. Apply general best practice for any gaps.
+4. When the document provides specific data (torque values, distances, pressures, crew requirements), include it in your output.`;
 }
 
 async function agentProjectManager(job) {
@@ -1453,18 +1453,13 @@ async function agentProjectManager(job) {
       return `⚠️ The task "${job}" does not appear to be covered in the provided document.`;
     }
     if (hasCtx) {
-      // Doc has relevant content — use it carefully
-      const pmPrompt = window._ragSupplemental
-        // Supplemental: doc is equipment manual, steps must come from task knowledge
-        ? `You are a construction project manager. Break the given task into 5-7 numbered implementation steps.
-The document excerpt below is from an equipment safety manual — use it ONLY to inform equipment-related steps.
-The work sequence must be based on YOUR knowledge of how this construction task is actually performed.
-Format: numbered list only, one step per line, no explanations.`
-        : ragSystemPrompt('project manager specializing in construction safety');
+      // Always generate steps from task knowledge; document adds equipment-specific detail
+      const pmPrompt = `You are a construction project manager. Break the given task into 5-7 numbered implementation steps.
+The document excerpt below is from an equipment manual — use it to inform equipment-specific steps (e.g. cool-down requirements, two-person procedures, pressure release steps).
+The work sequence MUST be based on your knowledge of how this task is actually performed.
+STRICT FORMAT: numbered list only, one step per line, no explanations.`;
 
-      const pmUser = window._ragSupplemental
-        ? `Task: ${job}\n\nEquipment manual context (for reference only):\n${ctx}\n\nList 5-7 implementation steps for this task:`
-        : `Task: ${job}\n\nDocument content:\n${ctx}\n\nBreak down this task into 5-8 specific implementation steps. Use the document as primary reference and supplement with your expertise. Each step = one distinct phase of work. Format as a numbered list, one step per line.`;
+      const pmUser = `Task: ${job}\n\nEquipment manual context (use for equipment-specific detail):\n${ctx}\n\nList 5-7 specific implementation steps for this task:`;
 
       return await callAPI(pmPrompt, pmUser);
     }
@@ -1507,7 +1502,7 @@ async function agentRiskIdentifier(steps, ragContext='') {
     const taskForRag = document.getElementById('taskInput')?.value || steps.substring(0, 100);
     const matchedJobForRag2 = jsaJobSearch(taskForRag);
     const jobRagTerms2 = jsaJobRagTerms(matchedJobForRag2);
-    const ctx = ragContext && ragContext.length > 50 ? ragContext : ragKeywordSearch(steps.substring(0, 200), 5, jobRagTerms2).join('\n\n');
+    const ctx = ragContext && ragContext.length > 50 ? ragContext : ragKeywordSearch(taskForRag, 5, jobRagTerms2).join('\n\n');
     const hasCtx = ctx && ctx.trim().length >= 50;
     if (!hasCtx && !window._ragSupplemental) {
       // Strict RAG mode only
@@ -1682,7 +1677,8 @@ Be demanding: a JSA used in the field must reflect real risk, not conservative d
 
 async function agentSafetyManager(assessments) {
   if (ragActive && ragChunks.length) {
-    const ctx = ragKeywordSearch(assessments.substring(0, 300), 4).join('\n\n');
+    const taskForSM = document.getElementById('taskInput')?.value || assessments.substring(0, 100);
+    const ctx = ragKeywordSearch(taskForSM, 4).join('\n\n');
     const docNote = ctx ? `\n\nDocument reference:\n${ctx}\n\nBase your preventive measures on this document where possible.` : '';
     return await callAPI(
       `You are a senior construction safety manager. For each moderate/high-risk hazard (P3C3+), develop SPECIFIC and DETAILED controls using the reference document.
@@ -1802,7 +1798,7 @@ FORMAT REQUIREMENTS:
 
 // ── OPTIONAL AGENTS ──────────────────────────────────────
 async function agentEquipmentSpecialist(steps, hazards) {
-  const docCtx = ragActive && ragChunks.length ? ragKeywordSearch('equipment machinery safety operation hydraulic', 4).join('\n\n') : '';
+  const docCtx = ragActive && ragChunks.length ? ragKeywordSearch(document.getElementById('taskInput')?.value || 'equipment machinery safety operation', 4).join('\n\n') : '';
   const docNote = docCtx
     ? `\n\nDocument context (use as primary reference, supplement with expertise for any gaps):\n${docCtx}`
     : '';
@@ -2519,7 +2515,7 @@ async function getRAGContext(query) {
   if (mode === 'api') {
     relevant = await ragAPISearch(query, 3);
   } else {
-    relevant = ragKeywordSearch(query, 4);
+    relevant = ragKeywordSearch(query, 6);
   }
   if (!relevant.length) return '';
   return `\n\nREFERENCE DOCUMENT (${ragFileName}):\n${relevant.join('\n---\n')}`;
